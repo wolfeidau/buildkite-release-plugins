@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tag="${BUILDKITE_TAG:?run this from a tag build of the release pipeline}"
+repo="${BUILDKITE_PLUGIN_SLSA_ATTEST_REPO:?slsa-attest: repo configuration is required}"
+project="${BUILDKITE_PLUGIN_SLSA_ATTEST_PROJECT:?slsa-attest: project configuration is required}"
+
+targets=()
+i=0
+while true; do
+  var="BUILDKITE_PLUGIN_SLSA_ATTEST_TARGETS_${i}"
+  if [[ -z "${!var+x}" ]]; then
+    break
+  fi
+  targets+=("${!var}")
+  i=$((i + 1))
+done
+if [[ "${#targets[@]}" -eq 0 ]]; then
+  echo "slsa-attest: targets configuration is required" >&2
+  exit 1
+fi
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+# The tag is interpolated into the provenance JSON below, so it must be a plain semver tag.
+if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+  echo "tag ${tag} is not a vX.Y.Z[-pre] tag" >&2
+  exit 1
+fi
+
+git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}"
+commit="$(git rev-parse "${tag}^{commit}")"
+# Only reviewed code is attested: the tag must point into main's history.
+git fetch --force origin main
+if ! git merge-base --is-ancestor "${commit}" FETCH_HEAD; then
+  echo "tag ${tag} (${commit}) is not on main" >&2
+  exit 1
+fi
+
+buildkite-agent artifact download "dist/*" .
+
+for target in "${targets[@]}"; do
+  archive="dist/${project}_${target}.tar.gz"
+  for f in "${archive}" "${archive}.sha256" "${archive}.sbom.json" "${archive}.sbom.json.sha256"; do
+    [[ -f "${f}" ]] || { echo "missing release asset ${f}" >&2; exit 1; }
+  done
+  for f in "${archive}" "${archive}.sbom.json"; do
+    if [[ "$(sha256_of "${f}")" != "$(cat "${f}.sha256")" ]]; then
+      echo "checksum mismatch for ${f}" >&2
+      exit 1
+    fi
+  done
+done
+
+# SLSA v1 provenance, signed keyless with this job's Buildkite OIDC identity (Fulcio cert, Rekor entry).
+cat >dist/provenance.json <<JSON
+{
+  "buildDefinition": {
+    "buildType": "https://github.com/${repo}/blob/${commit}/.buildkite/pipeline.release.yml",
+    "externalParameters": {
+      "repository": "https://github.com/${repo}",
+      "ref": "refs/tags/${tag}"
+    },
+    "internalParameters": {
+      "buildkite_organization": "${BUILDKITE_ORGANIZATION_SLUG}",
+      "buildkite_pipeline": "${BUILDKITE_PIPELINE_SLUG}"
+    },
+    "resolvedDependencies": [
+      {"uri": "git+https://github.com/${repo}@refs/tags/${tag}", "digest": {"gitCommit": "${commit}"}}
+    ]
+  },
+  "runDetails": {
+    "builder": {"id": "https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}"},
+    "metadata": {"invocationId": "${BUILDKITE_BUILD_URL}"}
+  }
+}
+JSON
+
+for target in "${targets[@]}"; do
+  archive="${project}_${target}.tar.gz"
+  # Run from dist so the attestation subject is the bare asset name.
+  (cd dist && cosign attest-blob --yes --oidc-provider buildkite-agent --type slsaprovenance1 \
+    --predicate provenance.json --bundle "${archive}.sigstore.json" "${archive}")
+  buildkite-agent artifact upload "dist/${archive}.sigstore.json"
+done

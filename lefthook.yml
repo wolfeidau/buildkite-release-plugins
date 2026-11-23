@@ -1,0 +1,8 @@
+pre-commit:
+  commands:
+    shellcheck:
+      glob: "{test.sh,*/hooks/*}"
+      run: mise exec -- shellcheck {staged_files}
+    test:
+      glob: "{test.sh,*/hooks/*}"
+      run: ./test.sh

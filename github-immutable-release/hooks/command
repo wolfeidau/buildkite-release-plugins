@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tag="${BUILDKITE_TAG:?run this from a tag build of the release pipeline}"
+repo="${BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_REPO:?github-immutable-release: repo configuration is required}"
+project="${BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_PROJECT:?github-immutable-release: project configuration is required}"
+secret_name="${BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_GITHUB_TOKEN_SECRET:?github-immutable-release: github-token-secret configuration is required}"
+
+targets=()
+i=0
+while true; do
+  var="BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_TARGETS_${i}"
+  if [[ -z "${!var+x}" ]]; then
+    break
+  fi
+  targets+=("${!var}")
+  i=$((i + 1))
+done
+if [[ "${#targets[@]}" -eq 0 ]]; then
+  echo "github-immutable-release: targets configuration is required" >&2
+  exit 1
+fi
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+  echo "tag ${tag} is not a vX.Y.Z[-pre] tag" >&2
+  exit 1
+fi
+
+git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}"
+commit="$(git rev-parse "${tag}^{commit}")"
+# Only reviewed code is released: the tag must point into main's history.
+git fetch --force origin main
+if ! git merge-base --is-ancestor "${commit}" FETCH_HEAD; then
+  echo "tag ${tag} (${commit}) is not on main" >&2
+  exit 1
+fi
+
+token="$(buildkite-agent secret get "${secret_name}" 2>/dev/null)" || {
+  echo "failed to read the ${secret_name} cluster secret" >&2
+  exit 1
+}
+
+# Immutable releases can't be changed once published, so a re-run must cut a new tag instead.
+if GH_TOKEN="${token}" gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
+  echo "release ${tag} already exists; tag a new version instead" >&2
+  exit 1
+fi
+
+buildkite-agent artifact download "dist/*" .
+
+assets=()
+for target in "${targets[@]}"; do
+  archive="dist/${project}_${target}.tar.gz"
+  for f in "${archive}" "${archive}.sha256" "${archive}.sbom.json" "${archive}.sbom.json.sha256" "${archive}.sigstore.json"; do
+    [[ -f "${f}" ]] || { echo "missing release asset ${f}" >&2; exit 1; }
+    assets+=("${f}")
+  done
+  for f in "${archive}" "${archive}.sbom.json"; do
+    if [[ "$(sha256_of "${f}")" != "$(cat "${f}.sha256")" ]]; then
+      echo "checksum mismatch for ${f}" >&2
+      exit 1
+    fi
+  done
+done
+
+flags=(--repo "${repo}" --verify-tag --title "${tag}" --notes "")
+if [[ "${tag}" == *-* ]]; then
+  flags+=(--prerelease)
+fi
+
+# gh uploads the assets to a draft and publishes it last, so the release is complete when it becomes immutable.
+GH_TOKEN="${token}" gh release create "${tag}" "${flags[@]}" "${assets[@]}"

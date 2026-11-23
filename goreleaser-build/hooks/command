@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tag="${BUILDKITE_TAG:?run this from a tag build of the release pipeline}"
+
+artifacts=()
+i=0
+while true; do
+  var="BUILDKITE_PLUGIN_GORELEASER_BUILD_ARTIFACTS_${i}"
+  if [[ -z "${!var+x}" ]]; then
+    break
+  fi
+  artifacts+=("${!var}")
+  i=$((i + 1))
+done
+if [[ "${#artifacts[@]}" -eq 0 ]]; then
+  echo "goreleaser-build: artifacts configuration is required" >&2
+  exit 1
+fi
+
+darwin_artifacts=()
+i=0
+while true; do
+  var="BUILDKITE_PLUGIN_GORELEASER_BUILD_DARWIN_ARTIFACTS_${i}"
+  if [[ -z "${!var+x}" ]]; then
+    break
+  fi
+  darwin_artifacts+=("${!var}")
+  i=$((i + 1))
+done
+
+# Checkouts don't always fetch tags, and goreleaser refuses a tag that isn't on HEAD.
+git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}"
+
+# Nothing is published here: downstream release plugins attest and publish every target together.
+GORELEASER_CURRENT_TAG="${tag}" goreleaser release --clean --skip=publish
+
+for pattern in "${artifacts[@]}"; do
+  buildkite-agent artifact upload "${pattern}"
+done
+
+# Only macOS uploads Darwin-only artifacts (for example a Homebrew formula), because every agent writes to the same path.
+if [[ "$(uname -s)" == "Darwin" && "${#darwin_artifacts[@]}" -gt 0 ]]; then
+  for pattern in "${darwin_artifacts[@]}"; do
+    buildkite-agent artifact upload "${pattern}"
+  done
+fi

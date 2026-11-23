@@ -1,0 +1,22 @@
+name: GoReleaser Build
+description: Builds a native GoReleaser tag release with publishing skipped and uploads Buildkite artifacts
+author: https://github.com/wolfeidau
+requirements:
+  - git
+  - goreleaser
+  - buildkite-agent
+configuration:
+  properties:
+    artifacts:
+      description: Buildkite artifact upload globs produced by GoReleaser
+      type: array
+      items:
+        type: string
+    darwin-artifacts:
+      description: Buildkite artifact upload globs uploaded only on macOS agents
+      type: array
+      items:
+        type: string
+  required:
+    - artifacts
+  additionalProperties: false

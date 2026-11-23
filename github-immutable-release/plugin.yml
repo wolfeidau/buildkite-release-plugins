@@ -1,0 +1,29 @@
+name: GitHub Immutable Release
+description: Downloads verified artifacts and provenance bundles and publishes a complete GitHub release in one shot
+author: https://github.com/wolfeidau
+requirements:
+  - git
+  - gh
+  - buildkite-agent
+configuration:
+  properties:
+    repo:
+      description: GitHub repository in owner/name format
+      type: string
+    project:
+      description: Release archive filename prefix
+      type: string
+    targets:
+      description: Target platform suffixes (for example darwin_arm64)
+      type: array
+      items:
+        type: string
+    github-token-secret:
+      description: Buildkite cluster secret name holding the GitHub release token
+      type: string
+  required:
+    - repo
+    - project
+    - targets
+    - github-token-secret
+  additionalProperties: false

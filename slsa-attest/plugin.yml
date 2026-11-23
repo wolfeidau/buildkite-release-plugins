@@ -1,0 +1,25 @@
+name: SLSA Attest
+description: Verifies Buildkite release artifacts and signs keyless SLSA v1 provenance bundles via Cosign and Buildkite OIDC
+author: https://github.com/wolfeidau
+requirements:
+  - git
+  - cosign
+  - buildkite-agent
+configuration:
+  properties:
+    repo:
+      description: GitHub repository in owner/name format
+      type: string
+    project:
+      description: Release archive filename prefix
+      type: string
+    targets:
+      description: Target platform suffixes (for example darwin_arm64)
+      type: array
+      items:
+        type: string
+  required:
+    - repo
+    - project
+    - targets
+  additionalProperties: false
