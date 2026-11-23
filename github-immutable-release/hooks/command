@@ -21,6 +21,24 @@ if [[ "${#targets[@]}" -eq 0 ]]; then
   exit 1
 fi
 
+# These values are interpolated into JSON, file paths and API URLs, so reject anything but plain names.
+repo_re='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+name_re='^[A-Za-z0-9_.-]+$'
+if [[ ! "${repo}" =~ ${repo_re} || "${repo}" == *..* ]]; then
+  echo "github-immutable-release: invalid repo ${repo}" >&2
+  exit 1
+fi
+if [[ ! "${project}" =~ ${name_re} || "${project}" == *..* ]]; then
+  echo "github-immutable-release: invalid project ${project}" >&2
+  exit 1
+fi
+for target in "${targets[@]}"; do
+  if [[ ! "${target}" =~ ${name_re} || "${target}" == *..* ]]; then
+    echo "github-immutable-release: invalid target ${target}" >&2
+    exit 1
+  fi
+done
+
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | cut -d' ' -f1

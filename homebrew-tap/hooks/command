@@ -19,7 +19,13 @@ buildkite-agent artifact download "${checksum_artifact}" .
 [[ -f "${artifact_path}" ]] || { echo "missing ${artifact_path}" >&2; exit 1; }
 [[ -f "${checksum_artifact}" ]] || { echo "missing ${checksum_artifact}" >&2; exit 1; }
 
-for want in "depends_on :macos" "releases/download/${tag}/${archive}\"" "sha256 \"$(cat "${checksum_artifact}")\""; do
+checksum="$(<"${checksum_artifact}")"
+if [[ ! "${checksum}" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "homebrew-tap: invalid checksum ${checksum}" >&2
+  exit 1
+fi
+
+for want in "depends_on :macos" "releases/download/${tag}/${archive}\"" "sha256 \"${checksum}\""; do
   if ! grep -qF -- "${want}" "${artifact_path}"; then
     echo "formula is not valid for ${tag}: missing ${want}" >&2
     exit 1
@@ -39,6 +45,17 @@ fi
 tap="${BUILDKITE_PLUGIN_HOMEBREW_TAP_TAP:?homebrew-tap: tap configuration is required}"
 formula_path="${BUILDKITE_PLUGIN_HOMEBREW_TAP_FORMULA_PATH:?homebrew-tap: formula-path configuration is required}"
 secret_name="${BUILDKITE_PLUGIN_HOMEBREW_TAP_GITHUB_TOKEN_SECRET:?homebrew-tap: github-token-secret configuration is required}"
+
+repo_re='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+formula_re='^[A-Za-z0-9_./-]+\.rb$'
+if [[ ! "${tap}" =~ ${repo_re} || "${tap}" == *..* ]]; then
+  echo "homebrew-tap: invalid tap ${tap}" >&2
+  exit 1
+fi
+if [[ ! "${formula_path}" =~ ${formula_re} || "${formula_path}" == *..* || "${formula_path}" == /* ]]; then
+  echo "homebrew-tap: invalid formula-path ${formula_path}" >&2
+  exit 1
+fi
 
 token="$(buildkite-agent secret get "${secret_name}" 2>/dev/null)" || {
   echo "failed to read the ${secret_name} cluster secret" >&2
