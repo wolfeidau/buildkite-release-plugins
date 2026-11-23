@@ -94,9 +94,15 @@ steps:
 ## Development
 
 ```sh
+mise install
+lefthook install
 mise run check:lint
 mise run test
 ```
+
+## Security
+
+Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 
 ## License
 
