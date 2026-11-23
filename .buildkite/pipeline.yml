@@ -1,0 +1,13 @@
+steps:
+  - group: ":mag: QA"
+    key: quality_checks
+    steps:
+      - label: ":shell: shellcheck"
+        command: mise run check:lint
+        plugins:
+          - mise#v1.1.6: ~
+
+      - label: ":test_tube: test"
+        command: mise run test
+        plugins:
+          - mise#v1.1.6: ~
