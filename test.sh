@@ -222,6 +222,16 @@ test_goreleaser_build() {
       "${plugins_dir}/goreleaser-build/hooks/command"
   )
   assert_contains "${case_dir}/uploads.log" "upload:dist/homebrew/Formula/quacktel.rb"
+
+  # Rejects non-semver tag before fetching or running goreleaser.
+  : >"${case_dir}/calls.log"
+  assert_fails_with "${case_dir}/work" "is not a vX.Y.Z[-pre] tag" "" \
+    env PATH="${case_dir}/bin:${PATH}" \
+      STUB_DIR="${case_dir}" \
+      BUILDKITE_TAG="v1.2" \
+      BUILDKITE_PLUGIN_GORELEASER_BUILD_ARTIFACTS_0="dist/quacktel_*.tar.gz*" \
+      "${plugins_dir}/goreleaser-build/hooks/command"
+  assert_not_contains "${case_dir}/calls.log" "goreleaser"
 }
 
 test_slsa_attest() {
@@ -288,6 +298,40 @@ test_slsa_attest() {
       BUILDKITE_PLUGIN_SLSA_ATTEST_PROJECT="quacktel" \
       BUILDKITE_PLUGIN_SLSA_ATTEST_TARGETS_0="darwin_arm64" \
       "${plugins_dir}/slsa-attest/hooks/command"
+
+  # Rejects repo values that would inject into the provenance JSON.
+  : >"${case_dir}/calls.log"
+  assert_fails_with "${case_dir}/work" "slsa-attest: invalid repo" "" \
+    env PATH="${case_dir}/bin:${PATH}" \
+      STUB_DIR="${case_dir}" \
+      BUILDKITE_TAG="v0.2.1-rc.1" \
+      BUILDKITE_ORGANIZATION_SLUG="wolfeidauci" \
+      BUILDKITE_PIPELINE_SLUG="quacktel-cli-release" \
+      BUILDKITE_BUILD_URL="https://buildkite.com/wolfeidauci/quacktel-cli-release/builds/1" \
+      BUILDKITE_PLUGIN_SLSA_ATTEST_REPO='a/b", "x": "y' \
+      BUILDKITE_PLUGIN_SLSA_ATTEST_PROJECT="quacktel" \
+      BUILDKITE_PLUGIN_SLSA_ATTEST_TARGETS_0="darwin_arm64" \
+      "${plugins_dir}/slsa-attest/hooks/command"
+  assert_not_contains "${case_dir}/calls.log" "cosign"
+
+  # Rejects path traversal in project and targets.
+  assert_fails_with "${case_dir}/work" "slsa-attest: invalid project" "" \
+    env PATH="${case_dir}/bin:${PATH}" \
+      STUB_DIR="${case_dir}" \
+      BUILDKITE_TAG="v0.2.1-rc.1" \
+      BUILDKITE_PLUGIN_SLSA_ATTEST_REPO="quacktel/cli" \
+      BUILDKITE_PLUGIN_SLSA_ATTEST_PROJECT="../evil" \
+      BUILDKITE_PLUGIN_SLSA_ATTEST_TARGETS_0="darwin_arm64" \
+      "${plugins_dir}/slsa-attest/hooks/command"
+  assert_fails_with "${case_dir}/work" "slsa-attest: invalid target" "" \
+    env PATH="${case_dir}/bin:${PATH}" \
+      STUB_DIR="${case_dir}" \
+      BUILDKITE_TAG="v0.2.1-rc.1" \
+      BUILDKITE_PLUGIN_SLSA_ATTEST_REPO="quacktel/cli" \
+      BUILDKITE_PLUGIN_SLSA_ATTEST_PROJECT="quacktel" \
+      BUILDKITE_PLUGIN_SLSA_ATTEST_TARGETS_0="../x" \
+      "${plugins_dir}/slsa-attest/hooks/command"
+  assert_not_contains "${case_dir}/calls.log" "cosign"
 }
 
 test_github_immutable_release() {
@@ -386,6 +430,38 @@ test_github_immutable_release() {
       BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_TARGETS_0="darwin_arm64" \
       BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_GITHUB_TOKEN_SECRET="QUACKTEL_GITHUB_TOKEN" \
       "${plugins_dir}/github-immutable-release/hooks/command"
+
+  # Rejects bad repo, project and target values before any release call.
+  : >"${case_dir}/calls.log"
+  assert_fails_with "${case_dir}/work" "github-immutable-release: invalid repo" "" \
+    env PATH="${case_dir}/bin:${PATH}" \
+      STUB_DIR="${case_dir}" \
+      BUILDKITE_TAG="v0.2.1-rc.1" \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_REPO='a/b", "x": "y' \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_PROJECT="quacktel" \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_TARGETS_0="darwin_arm64" \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_GITHUB_TOKEN_SECRET="QUACKTEL_GITHUB_TOKEN" \
+      "${plugins_dir}/github-immutable-release/hooks/command"
+  assert_fails_with "${case_dir}/work" "github-immutable-release: invalid project" "" \
+    env PATH="${case_dir}/bin:${PATH}" \
+      STUB_DIR="${case_dir}" \
+      BUILDKITE_TAG="v0.2.1-rc.1" \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_REPO="quacktel/cli" \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_PROJECT="../evil" \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_TARGETS_0="darwin_arm64" \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_GITHUB_TOKEN_SECRET="QUACKTEL_GITHUB_TOKEN" \
+      "${plugins_dir}/github-immutable-release/hooks/command"
+  assert_fails_with "${case_dir}/work" "github-immutable-release: invalid target" "" \
+    env PATH="${case_dir}/bin:${PATH}" \
+      STUB_DIR="${case_dir}" \
+      BUILDKITE_TAG="v0.2.1-rc.1" \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_REPO="quacktel/cli" \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_PROJECT="quacktel" \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_TARGETS_0="../x" \
+      BUILDKITE_PLUGIN_GITHUB_IMMUTABLE_RELEASE_GITHUB_TOKEN_SECRET="QUACKTEL_GITHUB_TOKEN" \
+      "${plugins_dir}/github-immutable-release/hooks/command"
+  assert_not_contains "${case_dir}/calls.log" "gh release create"
+  assert_not_contains "${case_dir}/calls.log" "cosign"
 }
 
 test_homebrew_tap() {
@@ -489,6 +565,47 @@ test_homebrew_tap() {
       BUILDKITE_PLUGIN_HOMEBREW_TAP_CHECKSUM_ARTIFACT="dist/quacktel_darwin_arm64.tar.gz.sha256" \
       BUILDKITE_PLUGIN_HOMEBREW_TAP_GITHUB_TOKEN_SECRET="QUACKTEL_GITHUB_TOKEN" \
       "${plugins_dir}/homebrew-tap/hooks/command"
+
+  # Rejects bad tap and formula-path before any API call.
+  : >"${case_dir}/calls.log"
+  assert_fails_with "${case_dir}/work" "homebrew-tap: invalid tap" "" \
+    env PATH="${case_dir}/bin:${PATH}" \
+      STUB_DIR="${case_dir}" \
+      BUILDKITE_TAG="v0.2.1" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_TAP="../.." \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_FORMULA_PATH="Formula/quacktel.rb" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_ARTIFACT_PATH="dist/homebrew/Formula/quacktel.rb" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_ARCHIVE="quacktel_darwin_arm64.tar.gz" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_CHECKSUM_ARTIFACT="dist/quacktel_darwin_arm64.tar.gz.sha256" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_GITHUB_TOKEN_SECRET="QUACKTEL_GITHUB_TOKEN" \
+      "${plugins_dir}/homebrew-tap/hooks/command"
+  assert_fails_with "${case_dir}/work" "homebrew-tap: invalid formula-path" "" \
+    env PATH="${case_dir}/bin:${PATH}" \
+      STUB_DIR="${case_dir}" \
+      BUILDKITE_TAG="v0.2.1" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_TAP="quacktel/homebrew-tap" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_FORMULA_PATH="../Formula/x.rb" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_ARTIFACT_PATH="dist/homebrew/Formula/quacktel.rb" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_ARCHIVE="quacktel_darwin_arm64.tar.gz" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_CHECKSUM_ARTIFACT="dist/quacktel_darwin_arm64.tar.gz.sha256" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_GITHUB_TOKEN_SECRET="QUACKTEL_GITHUB_TOKEN" \
+      "${plugins_dir}/homebrew-tap/hooks/command"
+  assert_not_contains "${case_dir}/calls.log" "gh api"
+
+  # Rejects a checksum artifact that is not a bare sha256 hex digest.
+  echo 'not-hex" evil' >"${case_dir}/store/dist/quacktel_darwin_arm64.tar.gz.sha256"
+  assert_fails_with "${case_dir}/work" "homebrew-tap: invalid checksum" "" \
+    env PATH="${case_dir}/bin:${PATH}" \
+      STUB_DIR="${case_dir}" \
+      BUILDKITE_TAG="v0.2.1" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_TAP="quacktel/homebrew-tap" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_FORMULA_PATH="Formula/quacktel.rb" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_ARTIFACT_PATH="dist/homebrew/Formula/quacktel.rb" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_ARCHIVE="quacktel_darwin_arm64.tar.gz" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_CHECKSUM_ARTIFACT="dist/quacktel_darwin_arm64.tar.gz.sha256" \
+      BUILDKITE_PLUGIN_HOMEBREW_TAP_GITHUB_TOKEN_SECRET="QUACKTEL_GITHUB_TOKEN" \
+      "${plugins_dir}/homebrew-tap/hooks/command"
+  assert_not_contains "${case_dir}/calls.log" "gh api"
 }
 
 test_goreleaser_build
